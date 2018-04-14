@@ -1,0 +1,394 @@
+{    
+  "$schema": "http://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+       "vmName": {
+            "type": "string",
+            "defaultValue": "VM",
+            "metadata": {
+                "description": "VM Name"
+            }
+        }
+  }, 
+      "variables": {
+        "vnetName": "vnet",
+        "vNetAddressSpace": "10.0.0.0/16",
+        "subnetName": "subnet01",
+        "subnetAdressPrefix": "10.0.0.0/24",
+        "subnetId": "[resourceId('Microsoft.Network/virtualNetworks/subnets',variables('vnetName'),variables('subnetName'))]",
+        "asgName": "webServersAsg",
+        "asgId": "[resourceId('Microsoft.Network/applicationSecurityGroups',variables('asgName'))]",
+        "nsgName": "webNsg",
+        "nsgId": "[resourceId('Microsoft.Network/networkSecurityGroups',variables('nsgName'))]",
+        "pipName": "webServerPip",
+        "pipId": "[resourceId('Microsoft.Network/publicIPAddresses',variables('pipName'))]",
+        "imageInfo": {
+            "publisher": "OpenLogic",
+            "offer": "CentOS",
+            "sku": "6.9",
+            "version": "latest"
+        },
+        "vmStorageType": "Standard_LRS"
+    },
+  "resources": [
+    {
+      "name": "AvailabilitySetA",
+      "type": "Microsoft.Compute/availabilitySets", 
+      "apiVersion": "2017-12-01",
+      "location": "West Europe",
+      "tags": {},
+      "properties": {
+          "platformUpdateDomainCount": "3",
+            "platformFaultDomainCount": "3"
+      },
+      "sku": {
+          "name":"Aligned"
+      }
+    },
+     {
+      "name": "AvailabilitySetB",
+      "type": "Microsoft.Compute/availabilitySets", 
+      "apiVersion": "2017-12-01",
+      "location": "West Europe",             
+      "tags": {},
+        "properties": {
+          "platformUpdateDomainCount": "3",
+            "platformFaultDomainCount": "3"
+      },
+      "sku": {
+          "name":"Aligned"
+      }
+    },
+       {
+            "comments": "Public Ip Address",
+            "name": "[variables('pipName')]",
+            "type": "Microsoft.Network/publicIPAddresses",
+            "apiVersion": "2017-11-01",
+            "location": "[resourceGroup().location]",
+            "properties": {
+                "publicIPAllocationMethod": "Dynamic"
+            }
+        },
+    {
+            "comments": "Application Security Group",
+            "name": "[variables('asgName')]",
+            "type": "Microsoft.Network/applicationSecurityGroups",
+            "apiVersion": "2017-10-01",
+            "location": "[resourceGroup().location]",
+            "properties": {}
+        },
+    {
+            "comments": "Network Security Group",
+            "name": "[variables('nsgName')]",
+            "type": "Microsoft.Network/networkSecurityGroups",
+            "apiVersion": "2017-09-01",
+            "location": "[resourceGroup().location]",
+            "dependsOn": [
+                "[variables('asgName')]"
+            ],
+            "properties": {
+                "securityRules": [
+                    {
+                        "name": "AllowHttpAll",
+                        "properties": {
+                            "description": "Allow http traffic to web servers",
+                            "sourceAddressPrefix": "*",
+                            "sourcePortRange": "*",
+                            "direction": "Inbound",
+                            "access": "Allow",
+                            "priority": 100,
+                            "protocol": "Tcp",
+                            "destinationPortRange": "80",
+                            "destinationApplicationSecurityGroups": [
+                                {
+                                    "id": "[variables('asgId')]"
+                                }
+                            ]
+                        }
+                    },
+                    {
+                        "name": "AllowSshAll",
+                        "properties": {
+                            "description": "Allow SSH traffic to web servers",
+                            "sourceAddressPrefix": "*",
+                            "sourcePortRange": "*",
+                            "direction": "Inbound",
+                            "access": "Allow",
+                            "priority": 200,
+                            "protocol": "Tcp",
+                            "destinationPortRange": "22",
+                            "destinationApplicationSecurityGroups": [
+                                {
+                                    "id": "[variables('asgId')]"
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+        },
+    {
+            "comments": "Virtual Network",
+            "name": "[variables('vNetName')]",
+            "type": "Microsoft.Network/virtualNetworks",
+            "apiVersion": "2016-03-30",
+            "location": "[resourceGroup().location]",
+            "dependsOn": [
+                "[variables('nsgName')]"
+            ],
+            "properties": {
+                "addressSpace": {
+                    "addressPrefixes": [
+                        "[variables('vNetAddressSpace')]"
+                    ]
+                },
+                "subnets": [
+                    {
+                        "name": "[variables('subnetName')]",
+                        "properties": {
+                            "addressPrefix": "[variables('subnetAdressPrefix')]",
+                            "networkSecurityGroup": {
+                                "id": "[variables('nsgId')]"
+                            }
+                        }
+                    }
+                ]
+            }
+        },
+    {
+            "comments": "Web Server Network Interface",
+            "name": "[concat(parameters('vmName'),'-NIC')]",
+            "type": "Microsoft.Network/networkInterfaces",
+            "location": "[resourceGroup().location]",
+            "apiVersion": "2017-09-01",
+            "dependsOn": [
+                "[variables('vNetName')]",
+                "[variables('pipName')]"
+            ],
+            "properties": {
+                "ipConfigurations": [
+                    {
+                        "name": "ipconfig1",
+                        "properties": {
+                            "privateIPAllocationMethod": "Dynamic",
+                            "publicIPAddress": {
+                                "id": "[variables('pipId')]"
+                            },
+                            "subnet": {
+                                "id": "[variables('subnetId')]"
+                            },
+                            "applicationSecurityGroups": [
+                                {
+                                    "id": "[variables('asgId')]"
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+        },
+    {
+      "name": "AppServerA01",
+      "type": "Microsoft.Compute/virtualMachines", 
+      "apiVersion": "2017-12-01",
+      "location": "[resourceGroup().location]",
+      "dependsOn": [
+                "[concat(parameters('vmName'),'-NIC')]"
+            ],
+      "tags": {},
+      "properties": {        
+         "availabilitySet": {
+            "id": "[resourceId('Microsoft.Compute/availabilitySets', 'AvailabilitySetA')]"
+        },
+         "networkProfile": {
+            "networkInterfaces": [
+                {
+                    "id": "[resourceId('Microsoft.Network/networkInterfaces',concat(parameters('vmName'),'-NIC'))]"
+                }
+            ]
+        },
+         "hardwareProfile": {
+            "vmSize": "Standard_B1ms"
+        },
+        "storageProfile": { 
+        "imageReference": { 
+          "publisher": "MicrosoftWindowsServer", 
+          "offer": "WindowsServer", 
+          "sku": "2012-R2-Datacenter", 
+          "version": "latest" 
+        }, 
+        "osDisk": {  
+          "caching": "ReadWrite", 
+          "createOption": "FromImage" 
+        },
+        "dataDisks": [
+          {
+            "name": "myDataDiskA01",
+            "diskSizeGB": "100",
+            "lun": 0,
+            "createOption": "Empty"
+          }
+        ] 
+      }
+    ,
+      "osProfile": {
+      "computerName": "AppServerA01",
+      "adminUsername": "mehrdud",
+      "adminPassword": "EllaBanoo2018!"
+      }
+      }     
+    },
+     {
+      "name": "AppServerA02",
+      "type": "Microsoft.Compute/virtualMachines", 
+      "apiVersion": "2017-12-01",
+      "location": "[resourceGroup().location]",
+      "dependsOn": [
+                "[concat(parameters('vmName'),'-NIC')]"
+            ],
+      "tags": {},
+      "properties": {
+          "availabilitySet": {
+            "id": "[resourceId('Microsoft.Compute/availabilitySets', 'AvailabilitySetA')]"
+        },
+        "networkProfile": {
+            "networkInterfaces": [
+                {
+                    "id": "[resourceId('Microsoft.Network/networkInterfaces',concat(parameters('vmName'),'-NIC'))]"
+                }
+            ]
+        },
+         "hardwareProfile": {
+            "vmSize": "Standard_B1ms"
+        },
+        "storageProfile": { 
+        "imageReference": { 
+          "publisher": "MicrosoftWindowsServer", 
+          "offer": "WindowsServer", 
+          "sku": "2012-R2-Datacenter", 
+          "version": "latest" 
+        }, 
+        "osDisk": {  
+          "caching": "ReadWrite", 
+          "createOption": "FromImage" 
+        },
+        "dataDisks": [
+          {
+            "name": "myDataDiskA02",
+            "diskSizeGB": "100",
+            "lun": 0,
+            "createOption": "Empty"
+          }
+        ] 
+      },
+      "osProfile": {
+      "computerName": "AppServerA02",
+      "adminUsername": "mehrdud",
+      "adminPassword": "EllaBanoo2018!"
+      }
+      }
+    },
+     {
+      "name": "AppServerB01",
+      "type": "Microsoft.Compute/virtualMachines", 
+      "apiVersion": "2017-12-01",
+      "location": "[resourceGroup().location]",
+      "dependsOn": [
+                "[concat(parameters('vmName'),'-NIC')]"
+            ],
+      "tags": {},
+      "properties": {
+          "availabilitySet": {
+            "id": "[resourceId('Microsoft.Compute/availabilitySets', 'AvailabilitySetB')]"
+        },
+         "networkProfile": {
+            "networkInterfaces": [
+                {
+                    "id": "[resourceId('Microsoft.Network/networkInterfaces',concat(parameters('vmName'),'-NIC'))]"
+                }
+            ]
+        },
+         "hardwareProfile": {
+            "vmSize": "Standard_B1ms"
+        },
+        "storageProfile": { 
+        "imageReference": { 
+          "publisher": "MicrosoftWindowsServer", 
+          "offer": "WindowsServer", 
+          "sku": "2012-R2-Datacenter", 
+          "version": "latest" 
+        }, 
+        "osDisk": {  
+          "caching": "ReadWrite", 
+          "createOption": "FromImage" 
+        },
+        "dataDisks": [
+          {
+            "name": "myDataDiskB01",
+            "diskSizeGB": "100",
+            "lun": 0,
+            "createOption": "Empty"
+          }
+        ] 
+      },
+      "osProfile": {
+      "computerName": "AppServerB01",
+      "adminUsername": "mehrdud",
+      "adminPassword": "EllaBanoo2018!"
+      }
+      }
+    },
+     {
+      "name": "AppServerB02",
+      "type": "Microsoft.Compute/virtualMachines", 
+      "apiVersion": "2017-12-01",
+      "location": "[resourceGroup().location]",
+      "dependsOn": [
+                "[concat(parameters('vmName'),'-NIC')]"
+            ],
+      "tags": {},
+      "properties": {
+          "availabilitySet": {
+            "id": "[resourceId('Microsoft.Compute/availabilitySets', 'AvailabilitySetB')]"
+        },
+        "networkProfile": {
+            "networkInterfaces": [
+                {
+                    "id": "[resourceId('Microsoft.Network/networkInterfaces',concat(parameters('vmName'),'-NIC'))]"
+                }
+            ]
+        },
+         "hardwareProfile": {
+            "vmSize": "Standard_B1ms"
+        },
+        "storageProfile": { 
+        "imageReference": { 
+          "publisher": "MicrosoftWindowsServer", 
+          "offer": "WindowsServer", 
+          "sku": "2012-R2-Datacenter", 
+          "version": "latest" 
+        }, 
+        "osDisk": {  
+          "caching": "ReadWrite", 
+          "createOption": "FromImage" 
+        },
+        "dataDisks": [
+          {
+            "name": "myDataDiskB02",
+            "diskSizeGB": "100",
+            "lun": 0,
+            "createOption": "Empty"
+          }
+        ] 
+      },
+      "osProfile": {
+      "computerName": "AppServerB02",
+      "adminUsername": "mehrdud",
+      "adminPassword": "EllaBanoo2018!"
+      }
+      }
+    }
+
+  ],
+  "outputs": {  }
+}
